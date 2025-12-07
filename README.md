@@ -10,6 +10,7 @@ This is the brain of the PolyMind Protocol. It houses the AI/ML engines and data
 
 ## Features
 
+### Core Features (v0.1.0)
 - 🔴 **Live Solana Transaction Monitoring**: Real-time transaction tracking via WebSocket
 - 🤖 **AI-Powered Predictions**: OpenAI integration for intelligent market analysis
 - 📊 **Risk Detection Engine**: Multi-layer risk assessment (flash loans, rug pulls, liquidation risks)
@@ -20,6 +21,13 @@ This is the brain of the PolyMind Protocol. It houses the AI/ML engines and data
 - 🔌 **WebSocket API**: Real-time updates for connected clients
 - 🧪 **Comprehensive Tests**: Full test coverage with pytest
 - 🚀 **Production Ready**: Proper error handling, logging, and configuration management
+
+### New in v0.2.0
+- 🔐 **zkML Verification Layer**: Zero-knowledge proofs for verifiable AI predictions
+- ⛓️ **Multi-Chain Support**: Ethereum, Polygon, Arbitrum, Base, and more
+- 🎨 **Enhanced API**: New endpoints for models, analytics, and cross-chain operations
+- 📊 **Advanced Analytics**: Comprehensive analytics and monitoring endpoints
+- 🔒 **Cryptographic Proofs**: Model integrity and inference correctness verification
 
 ## Setup
 

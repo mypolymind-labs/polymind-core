@@ -25,6 +25,11 @@ from polymind.types import (
 from config import settings
 from utils.logger import logger
 
+# v0.2.0 imports
+from zkmind import ProofGenerator, ProofVerifier
+from zkmind.types import ProofRequest, ProofType
+from multichain import MultiChainManager, ChainType
+
 # Global instances
 ingestor: Optional[DataIngestor] = None
 model: Optional[PredictiveModel] = None
@@ -32,6 +37,11 @@ risk_engine: Optional[RiskEngine] = None
 yield_optimizer: Optional[YieldOptimizer] = None
 sentiment_analyzer: Optional[SentimentAnalyzer] = None
 portfolio_service: Optional[PortfolioService] = None
+
+# v0.2.0 global instances
+proof_generator: Optional[ProofGenerator] = None
+proof_verifier: Optional[ProofVerifier] = None
+multichain_manager: Optional[MultiChainManager] = None
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -71,9 +81,10 @@ manager = ConnectionManager()
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
     global ingestor, model, risk_engine, yield_optimizer, sentiment_analyzer, portfolio_service
+    global proof_generator, proof_verifier, multichain_manager
     
     # Startup
-    logger.info("Starting PolyMind Core API...")
+    logger.info("Starting PolyMind Core API v0.2.0...")
     ingestor = DataIngestor()
     model = PredictiveModel()
     
@@ -84,7 +95,36 @@ async def lifespan(app: FastAPI):
     sentiment_analyzer = SentimentAnalyzer(ai_client=ai_client)
     portfolio_service = PortfolioService(ai_client=ai_client)
     
-    logger.info("PolyMind Core API started successfully")
+    # Initialize v0.2.0 services
+    logger.info("Initializing zkML verification layer...")
+    proof_generator = ProofGenerator()
+    proof_verifier = ProofVerifier()
+    
+    logger.info("Initializing multi-chain support...")
+    multichain_manager = MultiChainManager()
+    
+    # Add default chains (can be configured via environment variables)
+    try:
+        # Ethereum mainnet
+        multichain_manager.add_chain(
+            ChainType.ETHEREUM,
+            "https://eth.llamarpc.com"
+        )
+        logger.info("Added Ethereum chain support")
+    except Exception as e:
+        logger.warning(f"Could not add Ethereum chain: {e}")
+    
+    try:
+        # Polygon mainnet
+        multichain_manager.add_chain(
+            ChainType.POLYGON,
+            "https://polygon-rpc.com"
+        )
+        logger.info("Added Polygon chain support")
+    except Exception as e:
+        logger.warning(f"Could not add Polygon chain: {e}")
+    
+    logger.info("PolyMind Core API v0.2.0 started successfully")
     
     yield
     
@@ -544,6 +584,340 @@ async def compare_sentiment(tokens: List[str]):
         
     except Exception as e:
         logger.error(f"Error comparing sentiment: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# v0.2.0 NEW ENDPOINTS
+# ============================================================================
+
+@app.post("/zkml/proof/generate")
+async def generate_proof(request: ProofRequest):
+    """
+    Generate a zero-knowledge proof for model inference.
+    
+    Args:
+        request: Proof generation request
+    
+    Returns:
+        Generated proof
+    """
+    try:
+        if not proof_generator:
+            raise HTTPException(status_code=503, detail="zkML service not initialized")
+        
+        proof = await proof_generator.generate_proof(request)
+        
+        return proof.dict()
+        
+    except Exception as e:
+        logger.error(f"Error generating proof: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/zkml/proof/verify")
+async def verify_proof(proof_id: str):
+    """
+    Verify a zero-knowledge proof.
+    
+    Args:
+        proof_id: ID of the proof to verify
+    
+    Returns:
+        Verification result
+    """
+    try:
+        if not proof_generator or not proof_verifier:
+            raise HTTPException(status_code=503, detail="zkML service not initialized")
+        
+        # Get the proof
+        proof = proof_generator.get_proof(proof_id)
+        if not proof:
+            raise HTTPException(status_code=404, detail="Proof not found")
+        
+        # Verify it
+        result = await proof_verifier.verify_proof(proof)
+        
+        return result.dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verifying proof: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/zkml/proof/{proof_id}")
+async def get_proof(proof_id: str):
+    """
+    Get a proof by ID.
+    
+    Args:
+        proof_id: Proof identifier
+    
+    Returns:
+        Proof object
+    """
+    try:
+        if not proof_generator:
+            raise HTTPException(status_code=503, detail="zkML service not initialized")
+        
+        proof = proof_generator.get_proof(proof_id)
+        if not proof:
+            raise HTTPException(status_code=404, detail="Proof not found")
+        
+        return proof.dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching proof: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/multichain/chains")
+async def get_supported_chains():
+    """
+    Get list of supported blockchain networks.
+    
+    Returns:
+        List of supported chains
+    """
+    try:
+        if not multichain_manager:
+            raise HTTPException(status_code=503, detail="Multi-chain service not initialized")
+        
+        chains = multichain_manager.get_supported_chains()
+        chain_info = await multichain_manager.get_all_chain_info()
+        
+        return {
+            "supported_chains": [chain.value for chain in chains],
+            "chain_info": {chain.value: info for chain, info in chain_info.items()}
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching chain info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/multichain/{chain}/transaction/{tx_hash}")
+async def get_multichain_transaction(chain: str, tx_hash: str):
+    """
+    Get transaction from a specific blockchain.
+    
+    Args:
+        chain: Blockchain name (ethereum, polygon, arbitrum, base)
+        tx_hash: Transaction hash
+    
+    Returns:
+        Transaction details
+    """
+    try:
+        if not multichain_manager:
+            raise HTTPException(status_code=503, detail="Multi-chain service not initialized")
+        
+        # Convert chain string to ChainType
+        try:
+            chain_type = ChainType(chain.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unsupported chain: {chain}")
+        
+        transaction = await multichain_manager.get_transaction(chain_type, tx_hash)
+        
+        return transaction.dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching transaction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/multichain/{chain}/balance/{address}")
+async def get_multichain_balance(
+    chain: str,
+    address: str,
+    token_address: Optional[str] = Query(default=None)
+):
+    """
+    Get balance for an address on a specific blockchain.
+    
+    Args:
+        chain: Blockchain name
+        address: Wallet address
+        token_address: Optional token contract address
+    
+    Returns:
+        Balance information
+    """
+    try:
+        if not multichain_manager:
+            raise HTTPException(status_code=503, detail="Multi-chain service not initialized")
+        
+        try:
+            chain_type = ChainType(chain.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unsupported chain: {chain}")
+        
+        balance = await multichain_manager.get_balance(chain_type, address, token_address)
+        
+        return {
+            "chain": chain,
+            "address": address,
+            "token_address": token_address,
+            "balance": balance
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching balance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/multichain/balance/{address}")
+async def get_all_chain_balances(address: str):
+    """
+    Get balances across all supported chains.
+    
+    Args:
+        address: Wallet address
+    
+    Returns:
+        Balances for all chains
+    """
+    try:
+        if not multichain_manager:
+            raise HTTPException(status_code=503, detail="Multi-chain service not initialized")
+        
+        balances = await multichain_manager.get_all_balances(address)
+        
+        return {
+            "address": address,
+            "balances": {chain.value: balance for chain, balance in balances.items()}
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching balances: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/models")
+async def list_models():
+    """
+    List available prediction models.
+    
+    Returns:
+        List of available models
+    """
+    return {
+        "models": [
+            {
+                "id": "predicore-v1",
+                "name": "PrediCore v1",
+                "type": "ai_powered",
+                "description": "OpenAI-powered predictive model for DeFi",
+                "status": "active" if model else "inactive"
+            },
+            {
+                "id": "risk-engine-v1",
+                "name": "Risk Engine v1",
+                "type": "risk_analysis",
+                "description": "Multi-layer risk detection engine",
+                "status": "active" if risk_engine else "inactive"
+            }
+        ]
+    }
+
+
+@app.post("/models/{model_id}/predict")
+async def predict_with_model(model_id: str, token_symbol: str):
+    """
+    Get prediction using a specific model.
+    
+    Args:
+        model_id: Model identifier
+        token_symbol: Token to predict
+    
+    Returns:
+        Prediction result
+    """
+    try:
+        if model_id == "predicore-v1":
+            if not model or not ingestor:
+                raise HTTPException(status_code=503, detail="Model not initialized")
+            
+            market_data = await ingestor.fetch_data(token_symbol)
+            prediction = await model.predict(market_data)
+            
+            # Generate zkML proof for this prediction
+            if proof_generator:
+                try:
+                    proof_request = ProofRequest(
+                        model_id=model_id,
+                        input_data={"token": token_symbol, "market_data": market_data},
+                        output_data=prediction,
+                        proof_type=ProofType.INFERENCE
+                    )
+                    proof = await proof_generator.generate_proof(proof_request)
+                    prediction["zkml_proof_id"] = proof.proof_id
+                except Exception as e:
+                    logger.warning(f"Could not generate proof: {e}")
+            
+            return {
+                "model_id": model_id,
+                "token": token_symbol,
+                "prediction": prediction
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Model not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in model prediction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/summary")
+async def get_analytics_summary():
+    """
+    Get analytics summary across all services.
+    
+    Returns:
+        Analytics summary
+    """
+    try:
+        summary = {
+            "version": "0.2.0",
+            "services": {
+                "predicore": "active" if model else "inactive",
+                "risk_engine": "active" if risk_engine else "inactive",
+                "yield_optimizer": "active" if yield_optimizer else "inactive",
+                "sentiment_analyzer": "active" if sentiment_analyzer else "inactive",
+                "zkml": "active" if proof_generator else "inactive",
+                "multichain": "active" if multichain_manager else "inactive",
+            },
+            "features": [
+                "AI-Powered Predictions",
+                "Multi-Chain Support",
+                "zkML Verification",
+                "Risk Detection",
+                "Yield Optimization",
+                "Sentiment Analysis",
+                "Portfolio Management"
+            ]
+        }
+        
+        if multichain_manager:
+            summary["supported_chains"] = [
+                chain.value for chain in multichain_manager.get_supported_chains()
+            ]
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error generating analytics summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
